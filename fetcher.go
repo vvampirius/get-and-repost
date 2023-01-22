@@ -161,52 +161,50 @@ func (fetcher *Fetcher) Fetch(cancelCtx context.Context) {
 	return
 }
 
+func (fetcher *Fetcher) repost(name string, config ConfigRepost, cancelCtx context.Context) error {
+	f, err := os.Open(fetcher.Path)
+	if err != nil {
+		ErrorLog.Println(fetcher.Name, err.Error())
+		return err
+	}
+	defer f.Close()
+
+	ctx, _ := context.WithTimeout(cancelCtx, 3*time.Second)
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, config.Url, f)
+	if err != nil {
+		ErrorLog.Println(fetcher.Name, name, config.Url, err.Error())
+		return err
+	}
+
+	client := http.Client{}
+	response, err := client.Do(r)
+	if err != nil {
+		ErrorLog.Println(fetcher.Name, name, config.Url, err.Error())
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != 200 {
+		ErrorLog.Println(fetcher.Name, name, config.Url, err.Error())
+		return errors.New(response.Status)
+	}
+
+	return nil
+}
+
 func (fetcher *Fetcher) Repost(name string, config ConfigRepost) {
 	DebugLog.Printf("Repost %s to %s (%s)\n", fetcher.Name, name, config.Url)
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 	fetcher.cancelRepost[name] = cancelFunc
 	go func() {
 		for {
-			f, err := os.Open(fetcher.Path)
-			if err != nil {
-				ErrorLog.Println(fetcher.Name, err.Error())
+			if err := fetcher.repost(name, config, cancelCtx); err != nil {
 				PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
-				return
 			}
-
-			ctx, _ := context.WithTimeout(cancelCtx, 3*time.Second)
-			r, err := http.NewRequestWithContext(ctx, http.MethodPost, config.Url, f)
-			if err != nil {
-				ErrorLog.Println(fetcher.Name, name, config.Url, err.Error())
-				PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
-				f.Close()
-				return
-			}
-
-			client := http.Client{}
-			response, err := client.Do(r)
-			if err != nil {
-				ErrorLog.Println(fetcher.Name, name, config.Url, err.Error())
-				PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
-				f.Close()
-				return
-			}
-
-			f.Close()
-
-			if response.StatusCode != 200 {
-				ErrorLog.Println(fetcher.Name, name, config.Url, err.Error())
-				PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
-				response.Body.Close()
-				return
-			}
-
-			response.Body.Close()
-
 			select {
 			case <-time.After(time.Minute):
 				continue
-			case <-ctx.Done():
+			case <-cancelCtx.Done():
 				return
 			}
 		}
