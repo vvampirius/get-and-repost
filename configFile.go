@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/yaml.v2"
 	"os"
 	"sync"
@@ -77,7 +78,9 @@ func (configFile *ConfigFile) ReloadRoutine() {
 		time.Sleep(30 * time.Second)
 		if configFile.GetFileMTime().After(configFile.FileModified) {
 			DebugLog.Printf("%s updated. Reloading config file...\n", configFile.FilePath)
-			configFile.Reload()
+			if err := configFile.Reload(); err != nil {
+				PrometheusErrors.With(prometheus.Labels{`action`: `config_reload`, `get`: ``, `repost`: ``}).Inc()
+			}
 		}
 	}
 }

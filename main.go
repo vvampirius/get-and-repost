@@ -3,16 +3,20 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"log"
 	"net/http"
 	"os"
 )
 
-const VERSION = `0.1`
+const VERSION = `0.2`
 
 var (
-	ErrorLog = log.New(os.Stderr, `error#`, log.Lshortfile)
-	DebugLog = log.New(os.Stdout, `debug#`, log.Lshortfile)
+	ErrorLog         = log.New(os.Stderr, `error#`, log.Lshortfile)
+	DebugLog         = log.New(os.Stdout, `debug#`, log.Lshortfile)
+	PrometheusErrors = prometheus.NewCounterVec(prometheus.CounterOpts{Name: `errors`,
+		Help: `Errors counter`}, []string{`action`, `get`, `repost`})
 )
 
 func helpText() {
@@ -42,6 +46,11 @@ func main() {
 
 	fmt.Printf("Starting version %s...\n", VERSION)
 
+	if err := prometheus.Register(PrometheusErrors); err != nil {
+		ErrorLog.Println(err.Error())
+		os.Exit(1)
+	}
+
 	configFile, err := NewConfigFile(*configFilePath)
 	if err != nil {
 		os.Exit(1)
@@ -53,6 +62,7 @@ func main() {
 
 	server := http.Server{Addr: configFile.Config.Listen}
 	http.HandleFunc(`/ping`, Pong)
+	http.Handle("/metrics", promhttp.Handler())
 	if err := server.ListenAndServe(); err != nil {
 		ErrorLog.Fatalln(err.Error())
 	}

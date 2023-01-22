@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/robfig/cron/v3"
 	"io"
 	"net/http"
@@ -70,6 +71,7 @@ func (fetcher *Fetcher) fetchToTemporaryFile(cancelCtx context.Context) (string,
 	f, err := os.CreateTemp(``, `get-and-repost_`)
 	if err != nil {
 		ErrorLog.Println(err.Error())
+		PrometheusErrors.With(prometheus.Labels{`action`: `fetch`, `get`: fetcher.Name, `repost`: ``}).Inc()
 		return "", err
 	}
 	defer f.Close()
@@ -78,6 +80,7 @@ func (fetcher *Fetcher) fetchToTemporaryFile(cancelCtx context.Context) (string,
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, fetcher.Config.Url, nil)
 	if err != nil {
 		ErrorLog.Println(fetcher.Name, fetcher.Config.Url, err.Error())
+		PrometheusErrors.With(prometheus.Labels{`action`: `fetch`, `get`: fetcher.Name, `repost`: ``}).Inc()
 		return f.Name(), err
 	}
 
@@ -90,12 +93,14 @@ func (fetcher *Fetcher) fetchToTemporaryFile(cancelCtx context.Context) (string,
 	if err != nil {
 		ErrorLog.Printf("Error making request for target '%s' with url '%s': %s\n", fetcher.Name,
 			fetcher.Config.Url, err.Error())
+		PrometheusErrors.With(prometheus.Labels{`action`: `fetch`, `get`: fetcher.Name, `repost`: ``}).Inc()
 		return f.Name(), err
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != 200 {
 		ErrorLog.Println(fetcher.Name, fetcher.Config.Url, response.Status)
+		PrometheusErrors.With(prometheus.Labels{`action`: `fetch`, `get`: fetcher.Name, `repost`: ``}).Inc()
 		return f.Name(), errors.New(`Bad response status code`)
 	}
 
@@ -106,6 +111,7 @@ func (fetcher *Fetcher) fetchToTemporaryFile(cancelCtx context.Context) (string,
 
 	if _, err = io.Copy(f, response.Body); err != nil {
 		ErrorLog.Println(fetcher.Name, err.Error())
+		PrometheusErrors.With(prometheus.Labels{`action`: `fetch`, `get`: fetcher.Name, `repost`: ``}).Inc()
 		return f.Name(), err
 	}
 
@@ -146,11 +152,13 @@ func (fetcher *Fetcher) Fetch(cancelCtx context.Context) {
 	os.Remove(fetcher.Path)
 	if err = os.Rename(tempFilePath, fetcher.Path); err != nil {
 		ErrorLog.Println(fetcher.Name, err.Error())
+		PrometheusErrors.With(prometheus.Labels{`action`: `fetch`, `get`: fetcher.Name, `repost`: ``}).Inc()
 		return
 	}
 	for name, config := range fetcher.Config.Repost {
 		fetcher.Repost(name, config)
 	}
+	return
 }
 
 func (fetcher *Fetcher) Repost(name string, config ConfigRepost) {
@@ -162,6 +170,7 @@ func (fetcher *Fetcher) Repost(name string, config ConfigRepost) {
 			f, err := os.Open(fetcher.Path)
 			if err != nil {
 				ErrorLog.Println(fetcher.Name, err.Error())
+				PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
 				return
 			}
 
@@ -169,6 +178,7 @@ func (fetcher *Fetcher) Repost(name string, config ConfigRepost) {
 			r, err := http.NewRequestWithContext(ctx, http.MethodPost, config.Url, f)
 			if err != nil {
 				ErrorLog.Println(fetcher.Name, name, config.Url, err.Error())
+				PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
 				f.Close()
 				return
 			}
@@ -177,6 +187,7 @@ func (fetcher *Fetcher) Repost(name string, config ConfigRepost) {
 			response, err := client.Do(r)
 			if err != nil {
 				ErrorLog.Println(fetcher.Name, name, config.Url, err.Error())
+				PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
 				f.Close()
 				return
 			}
@@ -185,6 +196,7 @@ func (fetcher *Fetcher) Repost(name string, config ConfigRepost) {
 
 			if response.StatusCode != 200 {
 				ErrorLog.Println(fetcher.Name, name, config.Url, err.Error())
+				PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
 				response.Body.Close()
 				return
 			}
@@ -209,6 +221,7 @@ func NewFetcher(name string, config ConfigGet, path string) (*Fetcher, error) {
 		cancelRepost: make(map[string]context.CancelFunc),
 	}
 	if err := fetcher.Start(); err != nil {
+		PrometheusErrors.With(prometheus.Labels{`action`: `start_fetcher`, `get`: name, `repost`: ``}).Inc()
 		return nil, err
 	}
 	return &fetcher, nil
