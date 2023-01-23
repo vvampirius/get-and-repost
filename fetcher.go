@@ -162,6 +162,7 @@ func (fetcher *Fetcher) Fetch(cancelCtx context.Context) {
 }
 
 func (fetcher *Fetcher) repost(name string, config ConfigRepost, cancelCtx context.Context) error {
+	DebugLog.Printf("Repost %s to %s (%s)\n", fetcher.Name, name, config.Url)
 	f, err := os.Open(fetcher.Path)
 	if err != nil {
 		ErrorLog.Println(fetcher.Name, err.Error())
@@ -193,14 +194,15 @@ func (fetcher *Fetcher) repost(name string, config ConfigRepost, cancelCtx conte
 }
 
 func (fetcher *Fetcher) Repost(name string, config ConfigRepost) {
-	DebugLog.Printf("Repost %s to %s (%s)\n", fetcher.Name, name, config.Url)
 	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 	fetcher.cancelRepost[name] = cancelFunc
 	go func() {
 		for {
-			if err := fetcher.repost(name, config, cancelCtx); err != nil {
-				PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
+			err := fetcher.repost(name, config, cancelCtx)
+			if err == nil {
+				return
 			}
+			PrometheusErrors.With(prometheus.Labels{`action`: `repost`, `get`: fetcher.Name, `repost`: name}).Inc()
 			select {
 			case <-time.After(time.Minute):
 				continue
